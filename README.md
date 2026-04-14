@@ -29,10 +29,10 @@
 
 | Campo              | Integrante 1          | Integrante 2          |
 |--------------------|-----------------------|-----------------------|
-| **Nombre completo**| _[Tu nombre aquí]_    | _[Nombre compañero]_  |
-| **Correo UdeA**    | _[correo@udea.edu.co]_| _[correo@udea.edu.co]_|
-| **Documento**      | _[CC XXXXXXXXXX]_     | _[CC XXXXXXXXXX]_     |
-| **GitHub**         | _[@usuario]_          | _[@usuario]_          |
+| **Nombre completo**| _Michael Stiven Tabares Tobón_    | _Maria Fernanda Atencia Oliva_  |
+| **Correo UdeA**    | _michael.tabares@udea.edu.co_| _correo@udea.edu.co_|
+| **Documento**      | _CC 1036943803_     | _[CC XXXXXXXXXX]_     |
+| **GitHub**         | _[@Mista299]_          | _[@usuario]_          |
 
 ---
 
