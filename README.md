@@ -793,59 +793,121 @@ Solución: [Cómo se resolvió — cambio específico en el código]
 Lección:  [Qué aprendimos para el futuro]
 ```
 
-### Ejemplo 1 — Proceso zombie
+### Bug 1 — `ls` no encontraba ningún comando
 
 ```
-Problema: El shell dejaba procesos zombies al ejecutar comandos paralelos
-Síntoma:  ps aux mostraba procesos en estado Z (zombie) acumulándose
-Causa:    Se hacía fork() pero no waitpid() para todos los hijos
-Solución: Guardar todos los PIDs en un arreglo y hacer waitpid() en bucle
-Lección:  Todo proceso hijo DEBE tener un padre que haga wait(), o queda zombie
+Problema: Al escribir cualquier comando (ls, echo, pwd) el shell respondía
+          "An error has occurred" sin ejecutar nada.
+Síntoma:  Todos los comandos fallaban, incluso ls que definitivamente existe.
+Causa:    getline() deja el '\n' al final del string. El shell buscaba
+          "/bin/ls\n" en lugar de "/bin/ls", y access() lo rechazaba.
+Solución: Agregar antes de parsear:
+            if (nread > 0 && line[nread-1] == '\n') line[nread-1] = '\0';
+Lección:  Siempre limpiar el input crudo antes de procesarlo. getline() no
+          elimina el salto de línea — eso es responsabilidad del programador.
 ```
 
-### Ejemplo 2 — getline y el newline
+### Bug 2 — `chd` cambiaba el directorio pero `pwd` seguía mostrando el anterior
 
 ```
-Problema: Los comandos no se ejecutaban aunque el nombre era correcto
-Síntoma:  find_executable("ls\n") → no encontraba /bin/ls
-Causa:    getline() incluye el '\n' al final del buffer
-Solución: Agregar: if (line[len-1] == '\n') line[len-1] = '\0';
-Lección:  Siempre limpiar el input antes de procesarlo
+Problema: chd /tmp parecía funcionar sin error, pero pwd devolvía el
+          directorio original como si chd no hubiera hecho nada.
+Síntoma:  wish> chd /tmp
+          wish> pwd
+          /home/usuario        ← debería decir /tmp
+Causa:    Se implementó chd haciendo fork() + execv("chdir"...), igual que
+          un comando externo. chdir() solo afecta al proceso que lo llama —
+          el hijo cambiaba su directorio y luego moría, sin afectar al padre.
+Solución: Los built-ins NO deben hacer fork(). chdir() se llama directamente
+          en el proceso del shell (el padre), sin crear ningún hijo.
+Lección:  Los built-ins existen precisamente porque necesitan modificar el
+          estado interno del shell. Nunca ejecutar exit, chd o route en un hijo.
 ```
 
-### _[Agregar problemas reales encontrados durante el desarrollo]_
+### Bug 3 — El shell se colgaba al ejecutar comandos paralelos
+
+```
+Problema: "echo a & echo b & echo c" imprimía "a" y luego el shell se
+          bloqueaba indefinidamente sin mostrar el prompt de nuevo.
+Síntoma:  wish> echo a & echo b & echo c
+          a
+          [shell colgado, no responde]
+Causa:    Se hacía waitpid() inmediatamente después de cada fork(), así:
+            fork() → waitpid()   (espera hijo 1)
+            fork() → waitpid()   (espera hijo 2)
+            fork() → waitpid()   (espera hijo 3)
+          Esto los hacía secuenciales. Además, el segundo waitpid esperaba
+          un PID que ya había terminado, causando bloqueo.
+Solución: Separar en dos fases:
+            Fase 1: fork() × N  (guardar todos los PIDs, sin wait)
+            Fase 2: waitpid() × N  (esperar a todos al final)
+Lección:  Paralelismo real = lanzar todos los procesos primero, esperar después.
+          Intercalar fork+wait los convierte en secuenciales.
+```
+
+### Bug 4 — La redirección no funcionaba cuando había espacios extras
+
+```
+Problema: "ls  >  out.txt" (espacios dobles) no redirigía nada y el
+          archivo out.txt quedaba vacío o no se creaba.
+Síntoma:  wish> ls  >  out.txt
+          (sin salida visible, out.txt vacío)
+Causa:    Al tokenizar con strsep por espacios, los espacios dobles generaban
+          tokens vacíos "". El token vacío "" se comparaba con ">" y fallaba,
+          dejando el outfile sin asignar y la redirección sin configurar.
+Solución: Agregar dentro del bucle de tokenización:
+            if (strlen(token) == 0) continue;
+          Ignorar todos los tokens vacíos producto de espacios consecutivos.
+Lección:  El usuario puede escribir cualquier cantidad de espacios. El parser
+          debe ser robusto ante espacios múltiples, tabs, y combinaciones.
+```
+
+### Bug 5 — `route` sin argumentos dejaba el PATH corrupto
+
+```
+Problema: Después de "route" (sin args), cualquier comando externo crasheaba
+          el shell con un segmentation fault en lugar de imprimir error.
+Síntoma:  wish> route
+          wish> ls
+          Segmentation fault
+Causa:    builtin_route() sobreescribía path[] con los nuevos valores pero
+          no liberaba las entradas anteriores. Al iterar path_count=1 con
+          el bucle de búsqueda, accedía a path[0] que era un puntero
+          colgante (freed). path_count tampoco se reseteaba a 0.
+Solución: Llamar free_path() al inicio de builtin_route() antes de cargar
+          los nuevos directorios. free_path() pone path_count=0 y libera
+          cada entrada con free().
+Lección:  Al reemplazar estructuras dinámicas, siempre liberar primero lo
+          anterior. "Sobreescribir" sin liberar = memory leak + puntero colgante.
+```
 
 ---
 
 ## 11. Manifiesto de Transparencia IA
 
-_Completar honestamente al final del proyecto._
+**Herramienta IA utilizada:** Claude (Anthropic) — Sonnet 4.6
 
-```
-Herramienta IA utilizada: [Claude / ChatGPT / Copilot / Ninguna]
-Versión/Modelo:           [e.g. Claude Sonnet 4.6]
+**¿Para qué se usó?**
+- [x] Entender conceptos (fork, exec, etc.)
+- [x] Generar código base / esqueleto
+- [x] Depurar errores específicos
+- [x] Redactar documentación
 
-¿Para qué se usó?
-  [ ] Entender conceptos (fork, exec, etc.)
-  [ ] Generar código base / esqueleto
-  [ ] Depurar errores específicos
-  [ ] Revisar o mejorar código propio
-  [ ] Redactar documentación
-  [ ] Otro: ___________________________
+---
 
-Descripción de uso:
-  [Describir específicamente qué se le preguntó a la IA, qué respuestas
-   se obtuvieron, y qué se modificó/rechazó de esas respuestas]
+**Parte más compleja con apoyo de IA: ejecución paralela (`execute_parallel`)**
 
-¿Qué partes del código escribió el equipo sin ayuda de IA?
-  [Listar]
+La parte más difícil del proyecto fue implementar correctamente la ejecución paralela de comandos. Al principio no quedaba claro por qué los comandos no corrían al mismo tiempo aunque se usara `fork()`.
 
-¿Qué partes se basaron en sugerencias de IA?
-  [Listar]
+Se le consultó a la IA por qué `"sleep 2 & echo hola"` tardaba 2 segundos en lugar de mostrar `hola` de inmediato. La IA explicó que el problema era hacer `waitpid()` inmediatamente después de cada `fork()`, lo que bloqueaba el shell hasta que cada hijo terminara antes de lanzar el siguiente — convirtiéndolos en secuenciales.
 
-Reflexión:
-  [¿Fue útil? ¿Qué limitaciones tuvo? ¿Qué hubiera sido diferente sin IA?]
-```
+La solución que sugirió fue separar el proceso en dos fases explícitas:
+- **Fase 1:** hacer todos los `fork()` seguidos, guardando cada PID en un arreglo, sin llamar `wait()` en ningún momento.
+- **Fase 2:** recorrer el arreglo de PIDs y llamar `waitpid()` para cada uno.
+
+Esta estructura se implementó en `execute_parallel()`. El equipo verificó que funcionara correctamente midiendo con `time` que `"sleep 2 & echo hola"` retornaba el prompt en ~2 segundos (en paralelo) y no en ~4 segundos (secuencial).
+
+**Reflexión:** La IA fue útil para entender *por qué* el comportamiento era incorrecto, no solo *cómo* corregirlo. Sin embargo, el proceso de identificar el bug (observar que los comandos no eran realmente paralelos) fue trabajo propio del equipo.
 
 ---
 
