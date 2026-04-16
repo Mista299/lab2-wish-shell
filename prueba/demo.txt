@@ -1,0 +1,5 @@
+hola mundo
+adios mundo
+hola de nuevo
+sistemas operativos
+fork exec wait

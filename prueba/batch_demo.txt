@@ -1,0 +1,6 @@
+route ./comandos /bin
+echo iniciando prueba batch
+wcat prueba/demo.txt
+wgrep hola prueba/demo.txt > prueba/batch_resultado.txt
+echo fin del batch
+exit

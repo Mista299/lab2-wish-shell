@@ -30,9 +30,9 @@
 | Campo              | Integrante 1          | Integrante 2          |
 |--------------------|-----------------------|-----------------------|
 | **Nombre completo**| _Michael Stiven Tabares Tobón_    | _Maria Fernanda Atencia Oliva_  |
-| **Correo UdeA**    | _michael.tabares@udea.edu.co_| _correo@udea.edu.co_|
-| **Documento**      | _CC 1036943803_     | _[CC XXXXXXXXXX]_     |
-| **GitHub**         | _[@Mista299]_          | _[@usuario]_          |
+| **Correo UdeA**    | _michael.tabares@udea.edu.co_| _mariaf.atencia@udea.edu.co_|
+| **Documento**      | _CC 1036943803_     | _CC 1064980223_     |
+| **GitHub**         | _@Mista299_          | _@atenciamaria_          |
 
 ---
 
@@ -95,8 +95,6 @@ El modelo Unix de creación de procesos usa dos pasos:
    - **Si tiene éxito, NUNCA retorna.** El proceso hijo queda ejecutando el programa nuevo.
    - **Si retorna, es porque falló** (programa no encontrado, sin permisos, etc.). Después de un `execv()` fallido hay que llamar `exit(1)` en el hijo.
 
-> **¿Por qué no usar `system()`?** La función `system()` existe pero está **prohibida** en este proyecto. `system()` invoca `/bin/sh` internamente (un shell dentro del shell) y no te da control sobre redirecciones ni descriptores de archivo.
-
 Esto permite al padre (el shell) seguir vivo después de que el hijo termine, y también permite configurar el entorno del hijo (redirecciones, señales, etc.) *entre* el `fork()` y el `execv()`.
 
 ```
@@ -121,41 +119,70 @@ if (pid == 0) {
 
 ```mermaid
 flowchart TD
-    A([Inicio]) --> B{"¿argc == 1<br/>o argc == 2?"}
-    B -- "argc > 2" --> ERR1[/"Imprimir error<br/>salir con exit(1)"/]
-    B -- "argc == 2" --> BATCH["Abrir archivo batch<br/>FILE *input = fopen"]
-    B -- "argc == 1" --> INTER["Modo interactivo<br/>FILE *input = stdin"]
-    BATCH --> LOOP
-    INTER --> LOOP
+    A([wish arranca]) --> B{"argc?"}
+    B -- "mayor a 2" --> ERR[/"error · exit(1)"/]
+    B -- "igual a 1" --> I1
+    B -- "igual a 2" --> B1
 
-    LOOP([Bucle principal]) --> PROMPT{"¿Modo<br/>interactivo?"}
-    PROMPT -- sí --> PRINT["Imprimir 'wish> '"]
-    PROMPT -- no --> READ
-    PRINT --> READ
+    subgraph MI["── MODO INTERACTIVO · input: teclado ──"]
+        I1(["▶ tope del bucle"])
+        I1 --> I2["imprimir 'wish> '"]
+        I2 --> I3["getline · esperar tecla Enter"]
+        I3 --> I4{"EOF? · Ctrl+D"}
+        I4 -- sí --> IE(["exit(0)"])
+        I4 -- no --> I5{"¿línea vacía?"}
+        I5 -- sí --> I1
+        I5 -- no --> I6["ejecutar comando · ver detalle abajo"]
+        I6 --> I1
+    end
 
-    READ["getline() — leer línea"] --> EOF{¿EOF?}
-    EOF -- sí --> EXIT0[exit 0]
-    EOF -- no --> EMPTY{"¿Línea<br/>vacía?"}
-    EMPTY -- sí --> LOOP
-    EMPTY -- no --> SPLIT["Dividir por '&'<br/>→ lista de comandos"]
+    subgraph MB["── MODO BATCH · input: archivo ──"]
+        B1(["▶ tope del bucle"])
+        B1 --> B2["getline · leer línea del archivo"]
+        B2 --> B3{"EOF? · fin de archivo"}
+        B3 -- sí --> BE(["exit(0)"])
+        B3 -- no --> B4{"¿línea vacía?"}
+        B4 -- sí --> B1
+        B4 -- no --> B5["ejecutar comando · ver detalle abajo"]
+        B5 --> B1
+    end
+```
 
-    SPLIT --> PAR{"¿Más de<br/>un comando?"}
-    PAR -- sí --> PFORK["Para cada comando:<br/>fork() + execv()<br/>sin wait inmediato"]
-    PFORK --> WAITALL["waitpid() para<br/>todos los hijos"]
-    WAITALL --> LOOP
+**Detalle: ¿qué hace "ejecutar comando"?**
 
-    PAR -- no --> PARSE["Parsear comando:<br/>argv[] + outfile"]
-    PARSE --> BUILTIN{"¿Es<br/>built-in?"}
-    BUILTIN -- sí --> EXECBI["Ejecutar built-in<br/>(exit/chd/route)"]
-    EXECBI --> LOOP
-    BUILTIN -- no --> FIND["Buscar ejecutable<br/>en PATH"]
-    FIND --> FOUND{¿Encontrado?}
-    FOUND -- no --> ERR2[/"Imprimir error"/]
-    ERR2 --> LOOP
+```mermaid
+flowchart TD
+    CMD(["ejecutar comando"]) --> SPLIT["Dividir línea por '&'"]
+    SPLIT --> PAR{"¿varios segmentos?"}
+
+    PAR -- no --> PARSE["parsear: argv + outfile"]
+    PARSE --> BI{"¿built-in?"}
+    BI -- sí --> EXECBI["exit / chd / route"]
+    EXECBI --> FIN(["volver al tope del bucle"])
+    BI -- no --> FIND["buscar en PATH con access()"]
+    FIND --> FOUND{"¿encontrado?"}
+    FOUND -- no --> ERR[/"imprimir error"/]
+    ERR --> FIN
     FOUND -- sí --> FORK["fork()"]
-    FORK --> HIJO["Hijo:<br/>Configurar redirección<br/>execv()"]
-    FORK --> PADRE["Padre:<br/>wait()"]
-    PADRE --> LOOP
+    FORK --> HIJO["hijo: redirección + execv()"]
+    FORK --> PADRE["padre: waitpid()"]
+    PADRE --> FIN
+
+    PAR -- sí --> LOOP_PAR["para cada segmento:"]
+    LOOP_PAR --> PPARSE["parsear: argv + outfile"]
+    PPARSE --> PBI{"¿built-in?"}
+    PBI -- sí --> PEXECBI["ejecutar directo"]
+    PBI -- no --> PFIND["buscar en PATH con access()"]
+    PFIND --> PFOUND{"¿encontrado?"}
+    PFOUND -- no --> PERR[/"imprimir error"/]
+    PFOUND -- sí --> PFORK["fork() · guardar PID · NO waitpid"]
+    PFORK --> PHIJO["hijo: redirección + execv()"]
+    PEXECBI --> PNEXT{"¿hay más\nsegmentos?"}
+    PERR --> PNEXT
+    PFORK --> PNEXT
+    PNEXT -- sí --> LOOP_PAR
+    PNEXT -- no --> WALL["waitpid() para todos los PIDs guardados"]
+    WALL --> FIN
 ```
 
 ### Ciclo de vida de un proceso (fork/exec/wait)
@@ -781,18 +808,6 @@ EOF
 
 ## 10. Problemas y Soluciones
 
-_Completar durante y después del desarrollo._
-
-### Plantilla
-
-```
-Problema: [Descripción del bug o dificultad encontrada]
-Síntoma:  [Qué pasaba — comportamiento incorrecto observado]
-Causa:    [Por qué ocurría — raíz del problema]
-Solución: [Cómo se resolvió — cambio específico en el código]
-Lección:  [Qué aprendimos para el futuro]
-```
-
 ### Bug 1 — `ls` no encontraba ningún comando
 
 ```
@@ -899,16 +914,16 @@ Lección:  Al reemplazar estructuras dinámicas, siempre liberar primero lo
 
 La parte más difícil del proyecto fue implementar correctamente la ejecución paralela de comandos. Al principio no quedaba claro por qué los comandos no corrían al mismo tiempo aunque se usara `fork()`.
 
-Se le consultó a la IA por qué `"sleep 2 & echo hola"` tardaba 2 segundos en lugar de mostrar `hola` de inmediato. La IA explicó que el problema era hacer `waitpid()` inmediatamente después de cada `fork()`, lo que bloqueaba el shell hasta que cada hijo terminara antes de lanzar el siguiente — convirtiéndolos en secuenciales.
+Se le consultó a la IA por qué `"sleep 2 & echo hola"` tardaba 2 segundos en lugar de mostrar `hola` de inmediato. La IA explicó que el problema era hacer `waitpid()` inmediatamente después de cada `fork()`, lo que bloqueaba el shell hasta que cada hijo terminara antes de lanzar el siguiente, convirtiéndolos en secuenciales.
 
 La solución que sugirió fue separar el proceso en dos fases explícitas:
 - **Fase 1:** hacer todos los `fork()` seguidos, guardando cada PID en un arreglo, sin llamar `wait()` en ningún momento.
 - **Fase 2:** recorrer el arreglo de PIDs y llamar `waitpid()` para cada uno.
 
-Esta estructura se implementó en `execute_parallel()`. El equipo verificó que funcionara correctamente midiendo con `time` que `"sleep 2 & echo hola"` retornaba el prompt en ~2 segundos (en paralelo) y no en ~4 segundos (secuencial).
+Esta estructura se implementó en `execute_parallel()`. Verificamos que funcionara correctamente midiendo con `time` que `"sleep 2 & echo hola"` retornaba el prompt en ~2 segundos (en paralelo) y no en ~4 segundos (secuencial).
 
 **Reflexión:** La IA fue útil para entender *por qué* el comportamiento era incorrecto, no solo *cómo* corregirlo. Sin embargo, el proceso de identificar el bug (observar que los comandos no eran realmente paralelos) fue trabajo propio del equipo.
 
 ---
 
-*README generado como guía de implementación — 2026-1 · Sistemas Operativos · UdeA*
+*README 2026-1 · Sistemas Operativos · UdeA*
